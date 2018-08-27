@@ -14,6 +14,7 @@ import (
 
 	"github.com/github/hub/ui"
 	"github.com/github/hub/utils"
+	"github.com/keybase/go-keychain"
 	"github.com/mitchellh/go-homedir"
 	"golang.org/x/crypto/ssh/terminal"
 )
@@ -38,9 +39,6 @@ type Config struct {
 }
 
 func (c *Config) PromptForHost(host string) (h *Host, err error) {
-	token := c.DetectToken()
-	tokenFromEnv := token != ""
-
 	if host != GitHubHost {
 		if _, e := url.Parse("https://" + host); e != nil {
 			err = fmt.Errorf("invalid hostname: %q", host)
@@ -49,6 +47,8 @@ func (c *Config) PromptForHost(host string) (h *Host, err error) {
 	}
 
 	h = c.Find(host)
+	token := c.DetectToken(h)
+	tokenFromEnv := token != ""
 	if h != nil {
 		if h.User == "" {
 			utils.Check(CheckWriteable(configsFile()))
@@ -128,8 +128,25 @@ func (c *Config) authorizeClient(client *Client, host string) (err error) {
 	return
 }
 
-func (c *Config) DetectToken() string {
-	return os.Getenv("GITHUB_TOKEN")
+func (c *Config) DetectToken(host *Host) string {
+	token := os.Getenv("GITHUB_TOKEN")
+	if host != nil {
+		query := keychain.NewItem()
+		query.SetSecClass(keychain.SecClassGenericPassword)
+		query.SetService(fmt.Sprintf("hub.%s", host.Host))
+		query.SetAccount(host.User)
+		query.SetMatchLimit(keychain.MatchLimitOne)
+		query.SetReturnData(true)
+		results, err := keychain.QueryItem(query)
+		if err != nil || len(results) < 1 {
+			// Not found
+			token = ""
+			fmt.Printf("not found %s %s", err, results)
+		} else {
+			token = string(results[0].Data)
+		}
+	}
+	return token
 }
 
 func (c *Config) PromptForUser(host string) (user string) {
